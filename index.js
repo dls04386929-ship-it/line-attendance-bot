@@ -19,7 +19,7 @@ const pool = new Pool({
   }
 });
 
-// 啟動時自動檢查表格與欄位，不會刪除舊資料
+// 啟動時自動檢查表格與欄位
 pool.query(`
   CREATE TABLE IF NOT EXISTS attendance (
     id SERIAL PRIMARY KEY,
@@ -29,7 +29,6 @@ pool.query(`
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 `).then(async () => {
-  // 檢查並新增 display_name 與 location 欄位
   try {
     await pool.query('ALTER TABLE attendance ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);');
     await pool.query('ALTER TABLE attendance ADD COLUMN IF NOT EXISTS location VARCHAR(255);');
@@ -58,7 +57,6 @@ async function handleEvent(event) {
   const now = new Date();
   const timeString = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false });
 
-  // 嘗試向 LINE 取得使用者名稱 (Display Name)
   let displayName = '未知使用者';
   try {
     const profile = await client.getProfile(userId);
@@ -67,7 +65,7 @@ async function handleEvent(event) {
     console.error('取得使用者名稱失敗:', err);
   }
 
-  let replyText = '';
+  let replyMessage = {};
 
   // 1. 處理使用者傳送「地點/位置」的打卡
   if (event.type === 'message' && event.message.type === 'location') {
@@ -76,15 +74,17 @@ async function handleEvent(event) {
     const lon = event.message.longitude;
     const locationInfo = `${locationName} [${lat}, ${lon}]`;
 
-    // 預設以位置訊息作為上班打卡，或可依需求調整
     await pool.query(
       'INSERT INTO attendance (user_id, display_name, type, time, location) VALUES ($1, $2, $3, $4, $5)',
       [userId, displayName, '定位打卡', timeString, locationInfo]
     );
 
-    replyText = `✅ 【${displayName}】定位打卡成功！\n📍 地點：${locationName}\n⏰ 時間：${timeString}`;
+    replyMessage = {
+      type: 'text',
+      text: `✅ 【${displayName}】定位打卡成功！\n📍 地點：${locationName}\n⏰ 時間：${timeString}`
+    };
   } 
-  // 2. 處理文字訊息打卡
+  // 2. 處理文字訊息
   else if (event.type === 'message' && event.message.type === 'text') {
     const userText = event.message.text.trim();
 
@@ -93,27 +93,62 @@ async function handleEvent(event) {
         'INSERT INTO attendance (user_id, display_name, type, time, location) VALUES ($1, $2, $3, $4, $5)',
         [userId, displayName, '上班', timeString, '未附帶定位']
       );
-      replyText = `✅ 【${displayName}】上班打卡成功！\n時間：${timeString}\n\n💡 貼心提醒：您也可以直接傳送 LINE 的「位置資訊」來記錄打卡地點喔！`;
+      replyMessage = {
+        type: 'text',
+        text: `✅ 【${displayName}】上班打卡成功！\n時間：${timeString}`
+      };
     } else if (userText === '下班打卡' || userText === '2') {
       await pool.query(
         'INSERT INTO attendance (user_id, display_name, type, time, location) VALUES ($1, $2, $3, $4, $5)',
         [userId, displayName, '下班', timeString, '未附帶定位']
       );
-      replyText = `✅ 【${displayName}】下班打卡成功！\n時間：${timeString}\n辛苦了！好好休息 🚀`;
+      replyMessage = {
+        type: 'text',
+        text: `✅ 【${displayName}】下班打卡成功！\n時間：${timeString}\n辛苦了！好好休息 🚀`
+      };
     } else {
-      replyText = `歡迎使用打卡小幫手！\n請直接回傳以下指令：\n- 輸入「上班打卡」或「1」\n- 輸入「下班打卡」或「2」\n- 或直接傳送您的「位置資訊」進行定位打卡！`;
+      // 當輸入「定位」或其它非指令時，提供快速回覆按鈕引導
+      replyMessage = {
+        type: 'text',
+        text: `歡迎使用打卡小幫手！\n請選擇下方功能，或點擊按鈕傳送您的定位打卡：`,
+        quickReply: {
+          items: [
+            {
+              type: 'action',
+              action: {
+                type: 'message',
+                label: '🟢 上班打卡',
+                text: '上班打卡'
+              }
+            },
+            {
+              type: 'action',
+              action: {
+                type: 'message',
+                label: '🔴 下班打卡',
+                text: '下班打卡'
+              }
+            },
+            {
+              type: 'action',
+              action: {
+                type: 'uri',
+                label: '📍 傳送位置打卡',
+                uri: 'https://line.me/R/nv/location/'
+              }
+            }
+          ]
+        }
+      };
     }
   } else {
     return Promise.resolve(null);
   }
 
-  return client.replyMessage(event.replyToken, {
-    type: 'text',
-    text: replyText
-  });
+  return client.replyMessage(event.replyToken, replyMessage);
 }
 
-// 提供管理者從資料庫撈取並查看打卡紀錄的網頁畫面
+// 管理者介面
 app.get('/admin/records', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM attendance ORDER BY created_at DESC');
