@@ -148,6 +148,21 @@ async function handleEvent(event) {
   return client.replyMessage(event.replyToken, replyMessage);
 }
 
+// 提供管理者一鍵清空打卡資料的路由
+app.get('/admin/clear', async (req, res) => {
+  try {
+    await pool.query('TRUNCATE TABLE attendance RESTART IDENTITY CASCADE;');
+    res.send(`
+      <script>
+        alert('🗑️ 測試資料已全部清空，序號已重置！');
+        window.location.href = '/admin/records';
+      </script>
+    `);
+  } catch (err) {
+    res.status(500).send('清空資料失敗：' + err.message);
+  }
+});
+
 // 管理者介面
 app.get('/admin/records', async (req, res) => {
   try {
