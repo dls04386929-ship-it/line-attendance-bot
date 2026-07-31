@@ -19,23 +19,25 @@ const pool = new Pool({
   }
 });
 
-// 啟動時自動建立打卡紀錄資料表（支援儲存 display_name）
-// 啟動時自動建立打卡紀錄資料表與確保欄位完整
-// 啟動時自動重建正確的資料表結構
+// 啟動時自動檢查表格與欄位，不會刪除舊資料
 pool.query(`
-  DROP TABLE IF EXISTS attendance;
-  CREATE TABLE attendance (
+  CREATE TABLE IF NOT EXISTS attendance (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
-    display_name VARCHAR(255),
     type VARCHAR(50) NOT NULL,
     time VARCHAR(100) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
-`).then(() => {
-  console.log('✅ PostgreSQL 資料表重建成功 (已包含 display_name 欄位)');
+`).then(async () => {
+  // 另外分開執行確保 display_name 欄位存在，若不存在則安全新增
+  try {
+    await pool.query('ALTER TABLE attendance ADD COLUMN IF NOT EXISTS display_name VARCHAR(255);');
+    console.log('✅ PostgreSQL 資料表與欄位檢查成功');
+  } catch (err) {
+    console.error('❌ 新增欄位失敗:', err.message);
+  }
 }).catch(err => {
-  console.error('❌ 建立資料表失敗:', err);
+  console.error('❌ 建立資料表失敗:', err.message);
 });
 
 // 接收 LINE Webhook 請求
