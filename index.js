@@ -11,20 +11,19 @@ const config = {
 const app = express();
 const client = new line.Client(config);
 
-// 連接 PostgreSQL 資料庫
+// 連接 PostgreSQL 資料庫 (Render 會自動提供 DATABASE_URL 環境變數)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false
+    rejectUnauthorized: false // Render 雲端資料庫通常需要此設定
   }
 });
 
-// 啟動時自動建立打卡紀錄資料表（支援儲存 display_name）
+// 啟動時自動建立打卡紀錄資料表（如果不存在的話）
 pool.query(`
   CREATE TABLE IF NOT EXISTS attendance (
     id SERIAL PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
-    display_name VARCHAR(255),
     type VARCHAR(50) NOT NULL,
     time VARCHAR(100) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -57,31 +56,22 @@ async function handleEvent(event) {
   const now = new Date();
   const timeString = now.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false });
 
-  // 嘗試向 LINE 取得使用者名稱 (Display Name)
-  let displayName = '未知使用者';
-  try {
-    const profile = await client.getProfile(userId);
-    displayName = profile.displayName;
-  } catch (err) {
-    console.error('取得使用者名稱失敗:', err);
-  }
-
   let replyText = '';
 
   if (userText === '上班打卡' || userText === '1') {
-    // 寫入 PostgreSQL 資料庫 (包含名字)
+    // 寫入 PostgreSQL 資料庫
     await pool.query(
-      'INSERT INTO attendance (user_id, display_name, type, time) VALUES ($1, $2, $3, $4)',
-      [userId, displayName, '上班', timeString]
+      'INSERT INTO attendance (user_id, type, time) VALUES ($1, $2, $3)',
+      [userId, '上班', timeString]
     );
-    replyText = `✅ 【${displayName}】上班打卡成功！\n時間：${timeString}`;
+    replyText = `✅ 上班打卡成功！\n時間：${timeString}`;
   } else if (userText === '下班打卡' || userText === '2') {
-    // 寫入 PostgreSQL 資料庫 (包含名字)
+    // 寫入 PostgreSQL 資料庫
     await pool.query(
-      'INSERT INTO attendance (user_id, display_name, type, time) VALUES ($1, $2, $3, $4)',
-      [userId, displayName, '下班', timeString]
+      'INSERT INTO attendance (user_id, type, time) VALUES ($1, $2, $3)',
+      [userId, '下班', timeString]
     );
-    replyText = `✅ 【${displayName}】下班打卡成功！\n時間：${timeString}\n辛苦了！好好休息 🚀`;
+    replyText = `✅ 下班打卡成功！\n時間：${timeString}\n辛苦了！好好休息 🚀`;
   } else {
     replyText = `歡迎使用打卡小幫手！\n請直接回傳以下指令：\n- 輸入「上班打卡」或「1」\n- 輸入「下班打卡」或「2」`;
   }
@@ -106,7 +96,7 @@ app.get('/admin/records', async (req, res) => {
         <title>員工打卡紀錄資料庫</title>
         <style>
           body { font-family: sans-serif; background: #f4f6f9; margin: 0; padding: 20px; color: #333; }
-          .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+          .container { max-width: 800px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
           h2 { margin-top: 0; color: #111; }
           .stat { margin-bottom: 16px; font-size: 14px; color: #666; }
           table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -120,26 +110,24 @@ app.get('/admin/records', async (req, res) => {
       </head>
       <body>
         <div class="container">
-          <h2>📊 員工打卡紀錄總覽</h2>
+          <h2>📊 員工打卡紀錄資料庫 (PostgreSQL)</h2>
           <div class="stat">目前總打卡筆數：<b>${records.length}</b> 筆</div>
           <table>
             <tr>
               <th>序號</th>
-              <th>員工名稱 (LINE)</th>
               <th>LINE User ID</th>
               <th>打卡類型</th>
               <th>打卡時間</th>
             </tr>`;
     
     if(records.length === 0){
-      html += `<tr><td colspan="5" class="empty">目前尚無任何打卡紀錄</td></tr>`;
+      html += `<tr><td colspan="4" class="empty">目前尚無任何打卡紀錄</td></tr>`;
     } else {
       records.forEach((r, index) => {
         const badgeClass = r.type === '上班' ? 'badge-up' : 'badge-down';
         html += `<tr>
           <td>${index + 1}</td>
-          <td><b>${r.display_name || '未命名'}</b></td>
-          <td style="font-family: monospace; color: #777; font-size: 12px;">${r.user_id}</td>
+          <td style="font-family: monospace; color: #555;">${r.user_id}</td>
           <td><span class="${badgeClass}">${r.type}</span></td>
           <td>${r.time}</td>
         </tr>`;
